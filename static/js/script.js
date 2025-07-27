@@ -3,7 +3,8 @@ let isSpeaking = false;
 let childName = "";
 let topic = "";
 let selectedBook = "";
-let endTimeout = null;
+let micStartTime = null;
+let silenceTimer = null;
 let listening = false;
 let isTimeoutMode = false;
 
@@ -89,7 +90,7 @@ function setupRecognition() {
 
   recognition = new webkitSpeechRecognition();
   recognition.lang = 'en-US';
-  recognition.continuous = true; // gets ignored on Android
+  recognition.continuous = true;
   recognition.interimResults = false;
 
   recognition.onerror = (event) => {
@@ -97,24 +98,14 @@ function setupRecognition() {
   };
 
   recognition.onstart = () => {
-    console.log("🎙 Mic started listening...");
+    console.log("🎤 Mic started");
     listening = true;
-    if (endTimeout) clearTimeout(endTimeout);
-    if (!isTimeoutMode) {
-      endTimeout = setTimeout(() => {
-        if (listening && !isTimeoutMode) {
-          listening = false;
-          recognition.stop();
-          postSpeak("Are you still there, my little friend? Tina Aunty is waiting to hear you.")
-            .then(() => enableMic());
-        }
-      }, 15000);
-    }
+    micStartTime = Date.now();
+    startSilenceTimer();
   };
 
   recognition.onresult = async (event) => {
-    if (endTimeout) clearTimeout(endTimeout);
-
+    clearTimeout(silenceTimer);
     let fullTranscript = "";
     for (let i = event.resultIndex; i < event.results.length; ++i) {
       if (event.results[i].isFinal) {
@@ -157,28 +148,52 @@ function setupRecognition() {
       return;
     }
 
-    setTimeout(() => {
-      getBotResponse(transcript);
-    }, 3000);
+    disableMic();
+    setTimeout(() => getBotResponse(transcript), 3000);
   };
 
   recognition.onend = () => {
     listening = false;
-    if (endTimeout) clearTimeout(endTimeout);
+    clearTimeout(silenceTimer);
 
+    // Mic stops automatically on Android after 1 utterance — restart if needed
     if (!isSpeaking && !isTimeoutMode) {
-      console.log("🔁 Mic auto-restarting due to Android limitation");
-      setTimeout(() => enableMic(), 200);
+      const elapsed = Date.now() - micStartTime;
+      if (elapsed < 15000) {
+        console.log("🔁 Restarting mic due to Android auto-stop");
+        enableMic();
+      }
     }
   };
+}
+
+function startSilenceTimer() {
+  clearTimeout(silenceTimer);
+  silenceTimer = setTimeout(() => {
+    if (!isTimeoutMode && !isSpeaking) {
+      console.log("🕒 15s silence — asking 'Are you there?'");
+      disableMic();
+      postSpeak("Are you still there, my little friend? Tina Aunty is waiting to hear you.")
+        .then(() => enableMic());
+    }
+  }, 15000);
 }
 
 function startListening() {
   if (recognition && !isSpeaking) recognition.start();
 }
 
+function enableMic() {
+  micStartTime = Date.now();
+  startListening();
+  startSilenceTimer();
+}
+
+function disableMic() {
+  if (recognition) recognition.abort();
+}
+
 async function getBotResponse(message) {
-  disableMic();
   const res = await fetch("/talk", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -198,7 +213,6 @@ async function getBotResponse(message) {
   }
 
   await postSpeak(cleanText);
-  setTimeout(() => enableMic(), 1200);
 }
 
 function updateWhiteboard(text) {
@@ -250,12 +264,4 @@ async function postSpeak(text) {
     isSpeaking = false;
     enableMic();
   }
-}
-
-function disableMic() {
-  if (recognition) recognition.abort();
-}
-
-function enableMic() {
-  startListening();
 }
