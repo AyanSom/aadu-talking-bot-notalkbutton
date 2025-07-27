@@ -89,7 +89,7 @@ function setupRecognition() {
 
   recognition = new webkitSpeechRecognition();
   recognition.lang = 'en-US';
-  recognition.continuous = true;
+  recognition.continuous = true; // gets ignored on Android
   recognition.interimResults = false;
 
   recognition.onerror = (event) => {
@@ -115,7 +115,15 @@ function setupRecognition() {
   recognition.onresult = async (event) => {
     if (endTimeout) clearTimeout(endTimeout);
 
-    const transcript = event.results[0][0].transcript.trim().toLowerCase();
+    let fullTranscript = "";
+    for (let i = event.resultIndex; i < event.results.length; ++i) {
+      if (event.results[i].isFinal) {
+        fullTranscript += event.results[i][0].transcript + " ";
+      }
+    }
+
+    const transcript = fullTranscript.trim().toLowerCase();
+    if (!transcript) return;
 
     const res = await fetch("/check_timeout", {
       method: "POST",
@@ -149,13 +157,19 @@ function setupRecognition() {
       return;
     }
 
-    getBotResponse(transcript);
+    setTimeout(() => {
+      getBotResponse(transcript);
+    }, 3000);
   };
 
   recognition.onend = () => {
     listening = false;
     if (endTimeout) clearTimeout(endTimeout);
-    if (isTimeoutMode) enableMic();
+
+    if (!isSpeaking && !isTimeoutMode) {
+      console.log("🔁 Mic auto-restarting due to Android limitation");
+      setTimeout(() => enableMic(), 200);
+    }
   };
 }
 
@@ -189,7 +203,7 @@ async function getBotResponse(message) {
 
 function updateWhiteboard(text) {
   const whiteboard = document.getElementById("whiteboard");
-  const match = text.match(/([A-Z])\\s+is\\s+for\\s+(\\w+)/i);
+  const match = text.match(/([A-Z])\s+is\s+for\s+(\w+)/i);
   if (match) {
     whiteboard.innerHTML = `<strong style="font-size: 2em;">${match[1]}</strong><br>is for<br><strong>${match[2]}</strong>`;
   } else {
